@@ -78,8 +78,27 @@ def process_frame(frame, hog, detection_confidence=0.3):
         st.error(f"Error processing frame: {str(e)}")
         return frame, 0
 
+def check_camera_access(camera_index):
+    """Check if camera is accessible"""
+    cap = cv2.VideoCapture(camera_index)
+    if cap is None or not cap.isOpened():
+        return False
+    cap.release()
+    return True
+
+def get_available_cameras():
+    """Get list of available cameras"""
+    available_cameras = []
+    for i in range(5):  # Check first 5 camera indexes
+        if check_camera_access(i):
+            available_cameras.append(i)
+    return available_cameras if available_cameras else [0]  # Return [0] as default if none found
+
 def main():
     st.title("👥 Real-time Human Detection")
+    
+    # Get available cameras
+    available_cameras = get_available_cameras()
     
     # Sidebar settings
     with st.sidebar:
@@ -92,11 +111,12 @@ def main():
             step=0.1
         )
         
+        # Only show available cameras
         camera_index = st.selectbox(
             "Select Camera",
-            options=[0, 1, 2, 3],
+            options=available_cameras,
             index=0,
-            help="Choose camera index (usually 0 is the default webcam)"
+            help="Choose available camera"
         )
         
         fps_display = st.checkbox("Show FPS", value=True)
@@ -114,11 +134,24 @@ def main():
         # Camera controls
         col1, col2 = st.columns(2)
         with col1:
-            if st.button('▶️ Start Camera'):
-                st.session_state.camera_running = True
+            start_button = st.button('▶️ Start Camera')
         with col2:
-            if st.button('⏹️ Stop Camera'):
-                st.session_state.camera_running = False
+            stop_button = st.button('⏹️ Stop Camera')
+        
+        # Handle camera controls
+        if start_button:
+            if check_camera_access(camera_index):
+                st.session_state.camera_running = True
+            else:
+                st.error(f"""
+                    Cannot access camera {camera_index}. Please check:
+                    1. Camera is properly connected
+                    2. Camera permissions are granted
+                    3. No other application is using the camera
+                    4. Try a different camera index
+                """)
+        if stop_button:
+            st.session_state.camera_running = False
         
         # Placeholder for video feed
         video_placeholder = st.empty()
@@ -131,54 +164,67 @@ def main():
             try:
                 cap = cv2.VideoCapture(camera_index)
                 
-                # Set camera properties
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                
-                # FPS calculation variables
-                fps_start_time = time.time()
-                fps_counter = 0
-                fps = 0
-                
-                while st.session_state.camera_running:
-                    ret, frame = cap.read()
-                    if not ret:
-                        st.error("Failed to capture frame")
-                        break
+                # Check if camera opened successfully
+                if not cap.isOpened():
+                    st.error("Failed to open camera")
+                    st.session_state.camera_running = False
+                else:
+                    # Set camera properties
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                     
-                    # Process frame
-                    processed_frame, num_detections = process_frame(
-                        frame, hog, detection_confidence)
+                    # FPS calculation variables
+                    fps_start_time = time.time()
+                    fps_counter = 0
+                    fps = 0
                     
-                    # Calculate and display FPS
-                    fps_counter += 1
-                    if (time.time() - fps_start_time) > 1:
-                        fps = fps_counter / (time.time() - fps_start_time)
-                        fps_counter = 0
-                        fps_start_time = time.time()
-                    
-                    if fps_display:
-                        cv2.putText(processed_frame, f'FPS: {fps:.1f}', (10, 30),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                    
-                    # Convert BGR to RGB
-                    processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                    
-                    # Display frame and stats
-                    video_placeholder.image(processed_frame, channels="RGB")
-                    stats_placeholder.markdown(f"""
-                        <div class="detection-stats">
-                            🎯 Detected Humans: {num_detections} | ⚡ FPS: {fps:.1f}
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Small delay to reduce CPU usage
-                    time.sleep(0.01)
+                    while st.session_state.camera_running:
+                        ret, frame = cap.read()
+                        if not ret:
+                            st.error("Failed to capture frame")
+                            break
+                        
+                        # Process frame
+                        processed_frame, num_detections = process_frame(
+                            frame, hog, detection_confidence)
+                        
+                        # Calculate and display FPS
+                        fps_counter += 1
+                        if (time.time() - fps_start_time) > 1:
+                            fps = fps_counter / (time.time() - fps_start_time)
+                            fps_counter = 0
+                            fps_start_time = time.time()
+                        
+                        if fps_display:
+                            cv2.putText(processed_frame, f'FPS: {fps:.1f}', (10, 30),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                        
+                        # Convert BGR to RGB
+                        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                        
+                        # Display frame and stats
+                        video_placeholder.image(processed_frame, channels="RGB")
+                        stats_placeholder.markdown(f"""
+                            <div class="detection-stats">
+                                🎯 Detected Humans: {num_detections} | ⚡ FPS: {fps:.1f}
+                            </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Small delay to reduce CPU usage
+                        time.sleep(0.01)
                 
                 cap.release()
                 
             except Exception as e:
-                st.error(f"Camera Error: {str(e)}")
+                st.error(f"""
+                    Camera Error: {str(e)}
+                    
+                    Troubleshooting steps:
+                    1. Check if camera is connected
+                    2. Try restarting the application
+                    3. Make sure no other application is using the camera
+                    4. Try a different camera index
+                """)
                 st.session_state.camera_running = False
     
     with tab2:
